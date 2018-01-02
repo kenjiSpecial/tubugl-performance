@@ -4,7 +4,7 @@ const Stats = require('stats.js');
 import imageURL from '../assets/image.jpg';
 import uvImageURL from '../assets/uv_img.jpg';
 
-import { Program, ArrayBuffer, IndexArrayBuffer, Texture } from 'tubugl-core';
+import { Program, ArrayBuffer, IndexArrayBuffer, Texture, FrameBuffer } from 'tubugl-core';
 
 const vertexShader = `// an attribute will receive data from a buffer
   precision mediump float;
@@ -36,7 +36,6 @@ const fragmentShader = `
   uniform float uImageRate;
   uniform bool uIsGrey;
   uniform bool uIsFit;
-  
 
   void main() {
     vec2 customUv;
@@ -54,18 +53,18 @@ const fragmentShader = `
         }
     }
     
-    vec4 color;
-    if(uIsGrey){
-        vec4 outputColor =texture2D( uTexture, customUv);
-        color = vec4( (outputColor.r + outputColor.g + outputColor.b)/3. );
-        color.a = 1.0;  
-    }else{
-        color = texture2D( uTexture, customUv);
-    }
+	vec4 color;
+	
+	
+    
+	color = texture2D( uTexture, customUv);
     
     gl_FragColor = color;
   }
 `;
+
+const gausianBlur = require('./gausian-blur');
+const fastGausianBlur = require('./fast-gausian-blur');
 
 export default class App {
 	constructor(params = {}) {
@@ -75,9 +74,8 @@ export default class App {
 		this.canvas = document.createElement('canvas');
 		this.gl = this.canvas.getContext('webgl');
 
-		this._isGrey = false;
-		this._isFit = false;
 		this._isUVImage = false;
+		this._state = 'fast-blur'; //'gausin-blur';
 
 		if (params.isDebug) {
 			this.stats = new Stats();
@@ -95,20 +93,7 @@ export default class App {
 	_addGui() {
 		this.gui = new dat.GUI();
 		this.playAndStopGui = this.gui.add(this, '_playAndStop').name('pause');
-		this.gui
-			.add(this, '_isGrey')
-			.name('isGrey')
-			.onChange(() => {
-				this._obj.program.bind();
-				this.gl.uniform1f(this._program.getUniforms('uIsGrey').location, this._isGrey);
-			});
-		this.gui
-			.add(this, '_isFit')
-			.name('isFitScreen')
-			.onChange(() => {
-				this._obj.program.bind();
-				this.gl.uniform1f(this._program.getUniforms('uIsFit').location, this._isFit);
-			});
+
 		this.gui
 			.add(this, '_isUVImage')
 			.name('isUVImage')
@@ -120,10 +105,12 @@ export default class App {
 					.wrap()
 					.fromImage(image, image.width, image.height);
 			});
+
+		this.gui.add(this, '_state', ['gausin-blur', 'fast-blur']);
 	}
 
 	_createProgram() {
-		this._program = new Program(this.gl, vertexShader, fragmentShader);
+		this._program = new Program(this.gl, vertexShader, gausianBlur.frag);
 
 		let vertices = new Float32Array([0, 0, 1, 0, 0, 1]);
 
@@ -135,6 +122,25 @@ export default class App {
 			positionBuffer: this._arrayBuffer,
 			count: 3
 		};
+
+		let frontFramebuffer = new FrameBuffer(this.gl, {}, window.innerWidth, window.innerHeight);
+		frontFramebuffer.unbind();
+		let backFramebuffer = new FrameBuffer(this.gl, {}, window.innerWidth, window.innerHeight);
+		backFramebuffer.unbind();
+		this._framebuffers = {
+			front: frontFramebuffer,
+			back: backFramebuffer,
+			read: frontFramebuffer,
+			write: backFramebuffer
+		};
+
+		this._fastBlurProgram = new Program(this.gl, vertexShader, fastGausianBlur.frag);
+
+		this._fastBlurObj = {
+			program: this._fastBlurProgram,
+			positionBuffer: this._arrayBuffer,
+			count: 3
+		};
 	}
 
 	animateIn() {
@@ -143,7 +149,75 @@ export default class App {
 
 	loop() {
 		if (this.stats) this.stats.update();
+		this.gl.viewport(0, 0, this._width, this._height);
 
+		if (this._state === 'gausin-blur') {
+			this._drawBlur();
+		} else {
+			this._drawFastBlur();
+		}
+	}
+	_drawFastBlur() {
+		var iterations = 8;
+
+		if (!this._time) this._time = 1 / 60;
+		else this._time += 1 / 60;
+		let anim = (Math.cos(this._time) + 1) / 2;
+
+		this._fastBlurObj.program.bind();
+		for (var ii = 0; ii < iterations; ii++) {
+			var radius = iterations - ii - 1;
+			radius *= anim;
+
+			if (ii == iterations - 1) this._framebuffers.write.unbind();
+			else this._framebuffers.write.bind();
+
+			if (ii == 0) {
+				this._fastBlurObj.program.setUniformTexture(this._texture, 'uTexture');
+				this._texture.activeTexture().bind();
+			} else {
+				this._fastBlurObj.program.setUniformTexture(
+					this._framebuffers.read.texture,
+					'uTexture'
+				);
+				this._framebuffers.read.texture.activeTexture().bind();
+			}
+			this._fastBlurObj.positionBuffer.bind().attribPointer(this._fastBlurObj.program);
+
+			this.gl.uniform2f(
+				this._fastBlurObj.program.getUniforms('uWindow').location,
+				this._width,
+				this._height
+			);
+			if (ii % 2 == 1)
+				this.gl.uniform2f(
+					this._fastBlurObj.program.getUniforms('uDirection').location,
+					radius,
+					0
+				);
+			else
+				this.gl.uniform2f(
+					this._fastBlurObj.program.getUniforms('uDirection').location,
+					0,
+					radius
+				);
+
+			if (ii == iterations - 1 && (iterations - 1) % 2 == 1)
+				this.gl.uniform1f(this._fastBlurObj.program.getUniforms('uFlip').location, true);
+			else this.gl.uniform1f(this._fastBlurObj.program.getUniforms('uFlip').location, false);
+
+			this.gl.drawArrays(this.gl.TRIANGLES, 0, this._fastBlurObj.count);
+
+			if (this._framebuffers.read == this._framebuffers.front) {
+				this._framebuffers.read = this._framebuffers.back;
+				this._framebuffers.write = this._framebuffers.front;
+			} else {
+				this._framebuffers.read = this._framebuffers.front;
+				this._framebuffers.write = this._framebuffers.back;
+			}
+		}
+	}
+	_drawBlur() {
 		this._obj.program.bind();
 		this._obj.program.setUniformTexture(this._texture, 'uTexture');
 		this._texture.activeTexture().bind();
@@ -151,7 +225,6 @@ export default class App {
 
 		this.gl.drawArrays(this.gl.TRIANGLES, 0, this._obj.count);
 	}
-
 	animateOut() {
 		TweenMax.ticker.removeEventListener('tick', this.loop, this);
 	}
@@ -173,12 +246,6 @@ export default class App {
 			.setFilter()
 			.wrap()
 			.fromImage(this._image, this._image.width, this._image.height);
-
-		this._obj.program.bind();
-		this.gl.uniform1f(
-			this._program.getUniforms('uImageRate').location,
-			this._image.height / this._image.width
-		);
 
 		this._playAndStop();
 	}
@@ -221,6 +288,18 @@ export default class App {
 		this.gl.uniform1f(
 			this._program.getUniforms('uWindowRate').location,
 			this._height / this._width
+		);
+		this.gl.uniform2f(this._program.getUniforms('uWindow').location, this._width, this._height);
+
+		this._fastBlurObj.program.bind();
+		this.gl.uniform1f(
+			this._fastBlurObj.program.getUniforms('uWindowRate').location,
+			this._height / this._width
+		);
+		this.gl.uniform2f(
+			this._fastBlurObj.program.getUniforms('uWindow').location,
+			this._width,
+			this._height
 		);
 	}
 

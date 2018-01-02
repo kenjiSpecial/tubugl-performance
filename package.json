@@ -6,8 +6,8 @@
   "license": "MIT",
   "scripts": {
     "start00": "parcel src/00/index.html --no-hmr",
-    "dist00": "parcel build recipes/00/index.html -d docs/00 --public-url ./",
-    "screenshot00": "node ./node/screenshot.js --dir=app00",
+    "dist00": "parcel build src/00/index.html -d docs/00 --public-url ./",
+    "screenshot00": "node ./node/screenshot.js --dir='00'",
     "docs": "python -m SimpleHTTPServer 8200"
   },
   "dependencies": {

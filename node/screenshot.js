@@ -10,9 +10,15 @@ const puppeteer = require('puppeteer');
 	const browser = await puppeteer.launch();
 	const page = await browser.newPage();
 	await page.setViewport({ width: 640, height: 360 });
-	await page.goto(`http://localhost:8200/docs/${dir}/index.html?NoDebug/`);
-	// await delay(2000);
-	await page.screenshot({ path: `docs/${dir}/thumbnail.png` });
+
+	console.log(parseInt(dir));
+	if (parseInt(dir) < 10) {
+		await page.goto(`http://localhost:8200/docs/0${dir}/index.html?NoDebug/`);
+		await page.screenshot({ path: `docs/0${dir}/thumbnail.png` });
+	} else {
+		await page.goto(`http://localhost:8200/docs/${dir}/index.html?NoDebug/`);
+		await page.screenshot({ path: `docs/${dir}/thumbnail.png` });
+	}
 
 	await browser.close();
 })();
