@@ -1,7 +1,7 @@
 {
-  "name": "paracel-prtotype-kit",
+  "name": "tubugul-performance",
   "version": "1.0.0",
-  "description": "prototype tool with parcel",
+  "description": "performance for tubugl",
   "main": "index.js",
   "license": "MIT",
   "scripts": {
